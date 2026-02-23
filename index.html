@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Physics Orbs</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        body {
+            background: #FBFAF9;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        const orbs = [];
+        const numOrbs = 8;
+        const orbRadius = 80;
+        const gravity = 1.2;
+        const bounce = 0.5;
+        const friction = 0.8;
+
+        let draggedOrb = null;
+        let hoveredOrb = null;
+        let dragOffset = { x: 0, y: 0 };
+        let velocityHistory = [];
+        const velocityHistorySize = 5;
+
+        class Orb {
+            constructor(x, y, radius, color) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.vx = 0;
+                this.vy = 0;
+                this.mass = radius * radius;
+                this.color = color;
+            }
+
+            update() {
+                if (this === draggedOrb) return;
+
+                // Apply gravity
+                this.vy += gravity;
+
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Floor collision
+                if (this.y + this.radius > height) {
+                    this.y = height - this.radius;
+                    if (Math.abs(this.vy) > 2) {
+                        this.vy *= -bounce;
+                    } else {
+                        this.vy = 0;
+                    }
+                    this.vx *= friction;
+                }
+
+                // Ceiling collision
+                if (this.y - this.radius < 0) {
+                    this.y = this.radius;
+                    this.vy *= -bounce;
+                }
+
+                // Wall collisions
+                if (this.x + this.radius > width) {
+                    this.x = width - this.radius;
+                    if (Math.abs(this.vx) > 2) {
+                        this.vx *= -bounce;
+                    } else {
+                        this.vx = 0;
+                    }
+                }
+                if (this.x - this.radius < 0) {
+                    this.x = this.radius;
+                    if (Math.abs(this.vx) > 2) {
+                        this.vx *= -bounce;
+                    } else {
+                        this.vx = 0;
+                    }
+                }
+
+                // Dampen small velocities
+                if (Math.abs(this.vx) < 0.3) this.vx = 0;
+                if (Math.abs(this.vy) < 0.3 && this.y + this.radius >= height - 1) this.vy = 0;
+            }
+
+            draw() {
+                // Shadow
+                noStroke();
+                fill(52, 52, 51, 25);
+                ellipse(this.x + 10, this.y + 10, this.radius * 2);
+
+                // Main orb
+                fill(this.color);
+                stroke(52, 52, 51, 40);
+                strokeWeight(2);
+                ellipse(this.x, this.y, this.radius * 2);
+
+                // Highlight
+                noStroke();
+                fill(255, 255, 255, 180);
+                ellipse(this.x - this.radius * 0.35, this.y - this.radius * 0.35, this.radius * 0.45);
+            }
+
+            contains(px, py) {
+                return dist(px, py, this.x, this.y) < this.radius;
+            }
+        }
+
+        function handleCollision(orb1, orb2) {
+            let dx = orb2.x - orb1.x;
+            let dy = orb2.y - orb1.y;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+            let minDist = orb1.radius + orb2.radius;
+
+            if (distance < minDist && distance > 0.001) {
+                let nx = dx / distance;
+                let ny = dy / distance;
+                let overlap = minDist - distance;
+
+                // Separate orbs
+                let totalMass = orb1.mass + orb2.mass;
+                let move1 = overlap * (orb2.mass / totalMass);
+                let move2 = overlap * (orb1.mass / totalMass);
+
+                if (orb1 !== draggedOrb) {
+                    orb1.x -= nx * move1;
+                    orb1.y -= ny * move1;
+                } else {
+                    move2 += move1;
+                }
+
+                if (orb2 !== draggedOrb) {
+                    orb2.x += nx * move2;
+                    orb2.y += ny * move2;
+                }
+
+                // Calculate relative velocity
+                let dvx = orb1.vx - orb2.vx;
+                let dvy = orb1.vy - orb2.vy;
+                let dvn = dvx * nx + dvy * ny;
+
+                // Apply bounce impulse if moving toward each other
+                if (dvn > 0) {
+                    let restitution = bounce;
+                    let impulse = -(1 + restitution) * dvn / (1 / orb1.mass + 1 / orb2.mass);
+
+                    if (orb1 !== draggedOrb) {
+                        orb1.vx += impulse * nx / orb1.mass;
+                        orb1.vy += impulse * ny / orb1.mass;
+                    }
+                    if (orb2 !== draggedOrb) {
+                        orb2.vx -= impulse * nx / orb2.mass;
+                        orb2.vy -= impulse * ny / orb2.mass;
+                    }
+                }
+            }
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+
+            // Colors inspired by family.co
+            const colors = [
+                '#3784F4', // Blue
+                '#FF5310', // Orange
+                '#44C67F', // Green
+                '#F6C30F', // Yellow/Warning
+                '#9B6DF5', // Purple (derived)
+                '#FF7A5C', // Coral (derived from orange)
+                '#2ECDA7', // Teal (derived from green)
+                '#5BA4F7'  // Light blue (derived)
+            ];
+
+            // Spawn orbs stacked at top center
+            let startX = width / 2;
+            let startY = orbRadius + 20;
+
+            // Bottom row: 4 balls
+            for (let i = 0; i < 4; i++) {
+                let x = startX - (1.5 * orbRadius * 2) + (i * orbRadius * 2) + orbRadius;
+                orbs.push(new Orb(x, startY, orbRadius, colors[i]));
+            }
+
+            // Middle row: 3 balls
+            for (let i = 0; i < 3; i++) {
+                let x = startX - orbRadius * 2 + (i * orbRadius * 2);
+                let y = startY - orbRadius * 1.7;
+                orbs.push(new Orb(x, y, orbRadius, colors[4 + i]));
+            }
+
+            // Top: 1 ball
+            orbs.push(new Orb(startX, startY - orbRadius * 3.4, orbRadius, colors[7]));
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+
+        function draw() {
+            background('#FBFAF9');
+
+            // Check for hover (not while dragging)
+            hoveredOrb = null;
+            if (!draggedOrb) {
+                for (let i = orbs.length - 1; i >= 0; i--) {
+                    if (orbs[i].contains(mouseX, mouseY)) {
+                        hoveredOrb = orbs[i];
+                        break;
+                    }
+                }
+            }
+
+            // Update cursor
+            if (draggedOrb) {
+                cursor('grabbing');
+            } else if (hoveredOrb) {
+                cursor('grab');
+            } else {
+                cursor('default');
+            }
+
+            // Update dragged orb
+            if (draggedOrb) {
+                let prevX = draggedOrb.x;
+                let prevY = draggedOrb.y;
+
+                draggedOrb.x = mouseX - dragOffset.x;
+                draggedOrb.y = mouseY - dragOffset.y;
+                draggedOrb.x = constrain(draggedOrb.x, draggedOrb.radius, width - draggedOrb.radius);
+                draggedOrb.y = constrain(draggedOrb.y, draggedOrb.radius, height - draggedOrb.radius);
+
+                // Track velocity history for smooth release
+                velocityHistory.push({
+                    vx: draggedOrb.x - prevX,
+                    vy: draggedOrb.y - prevY
+                });
+                if (velocityHistory.length > velocityHistorySize) {
+                    velocityHistory.shift();
+                }
+            }
+
+            // Update physics
+            for (let orb of orbs) {
+                orb.update();
+            }
+
+            // Collision iterations
+            for (let iter = 0; iter < 8; iter++) {
+                for (let i = 0; i < orbs.length; i++) {
+                    for (let j = i + 1; j < orbs.length; j++) {
+                        handleCollision(orbs[i], orbs[j]);
+                    }
+                }
+            }
+
+            // Keep in bounds
+            for (let orb of orbs) {
+                if (orb !== draggedOrb) {
+                    orb.x = constrain(orb.x, orb.radius, width - orb.radius);
+                    orb.y = constrain(orb.y, orb.radius, height - orb.radius);
+                }
+            }
+
+            // Draw all orbs
+            for (let orb of orbs) {
+                orb.draw();
+            }
+
+            // Draw hover text
+            if (hoveredOrb && !draggedOrb) {
+                noStroke();
+                fill(132, 130, 129, 200);
+                textAlign(CENTER, CENTER);
+                textSize(14);
+                textFont('system-ui, -apple-system, sans-serif');
+                text('THROW ME!', hoveredOrb.x, hoveredOrb.y - hoveredOrb.radius - 20);
+            }
+        }
+
+        function mousePressed() {
+            for (let i = orbs.length - 1; i >= 0; i--) {
+                if (orbs[i].contains(mouseX, mouseY)) {
+                    draggedOrb = orbs[i];
+                    dragOffset.x = mouseX - orbs[i].x;
+                    dragOffset.y = mouseY - orbs[i].y;
+                    draggedOrb.vx = 0;
+                    draggedOrb.vy = 0;
+                    velocityHistory = [];
+                    orbs.splice(i, 1);
+                    orbs.push(draggedOrb);
+                    break;
+                }
+            }
+        }
+
+        function mouseReleased() {
+            if (draggedOrb) {
+                // Average velocity over recent frames for smooth, accurate throw
+                if (velocityHistory.length > 0) {
+                    let avgVx = 0;
+                    let avgVy = 0;
+                    for (let v of velocityHistory) {
+                        avgVx += v.vx;
+                        avgVy += v.vy;
+                    }
+                    avgVx /= velocityHistory.length;
+                    avgVy /= velocityHistory.length;
+
+                    draggedOrb.vx = avgVx;
+                    draggedOrb.vy = avgVy;
+                }
+                velocityHistory = [];
+                draggedOrb = null;
+            }
+        }
+
+        function touchStarted() {
+            mousePressed();
+            return false;
+        }
+
+        function touchEnded() {
+            mouseReleased();
+            return false;
+        }
+    </script>
+</body>
+</html>
